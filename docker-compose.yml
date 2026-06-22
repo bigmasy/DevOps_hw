@@ -4,9 +4,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_DB=dev_db
-      - POSTGRES_USER=dev_user
-      - POSTGRES_PASSWORD=dev_password
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
 
@@ -16,9 +16,11 @@ services:
     volumes:
       - .:/app
     environment:
-      - POSTGRES_DB=dev_db
-      - POSTGRES_USER=dev_user
-      - POSTGRES_PASSWORD=dev_password
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DEBUG=${DJANGO_DEBUG}
     depends_on:
       - db
 
