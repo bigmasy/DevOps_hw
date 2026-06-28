@@ -1,0 +1,19 @@
+replicaCount: 1
+
+image:
+  django: "835665967244.dkr.ecr.us-west-2.amazonaws.com/lesson-7-django-repo"
+  nginx: "nginx:alpine"
+  tag: "latest"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+config:
+  POSTGRES_DB: "postgres"
+  POSTGRES_USER: "postgres"
+  POSTGRES_PASSWORD: "postgres_password"
+  SECRET_KEY: "super-secret-key-for-eks-deployment"
+  DEBUG: "False"

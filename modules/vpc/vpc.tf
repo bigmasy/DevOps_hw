@@ -18,7 +18,10 @@ resource "aws_subnet" "public" {
   availability_zone       = var.availability_zones[count.index]
   map_public_ip_on_launch = true
 
-  tags = { Name = "${var.vpc_name}-public-${var.availability_zones[count.index]}" }
+  tags = { 
+    Name                     = "${var.vpc_name}-public-${var.availability_zones[count.index]}"
+    "kubernetes.io/role/elb" = "1"
+  }
 }
 
 resource "aws_subnet" "private" {
@@ -27,10 +30,12 @@ resource "aws_subnet" "private" {
   cidr_block        = var.private_subnets[count.index]
   availability_zone = var.availability_zones[count.index]
 
-  tags = { Name = "${var.vpc_name}-private-${var.availability_zones[count.index]}" }
+  tags = { 
+    Name                              = "${var.vpc_name}-private-${var.availability_zones[count.index]}"
+    "kubernetes.io/role/internal-elb" = "1"
+  }
 }
 
-# Для економії створюємо ОДИН NAT Gateway в першій публічній підмережі
 resource "aws_eip" "nat" {
   domain = "vpc"
   tags   = { Name = "${var.vpc_name}-nat-eip" }
@@ -40,6 +45,6 @@ resource "aws_nat_gateway" "nat" {
   allocation_id = aws_eip.nat.id
   subnet_id     = aws_subnet.public[0].id
 
-  tags = { Name = "${var.vpc_name}-nat-gw" }
-  depends_on    = [aws_internet_gateway.igw]
+  tags       = { Name = "${var.vpc_name}-nat-gw" }
+  depends_on = [aws_internet_gateway.igw]
 }

@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: django-app-deployment
+  labels:
+    app: django-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: django-app
+  template:
+    metadata:
+      labels:
+        app: django-app
+    spec:
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames:
+            - "db"
+
+      initContainers:
+        - name: wait-for-db
+          image: busybox:latest
+          command:
+            [
+              "sh",
+              "-c",
+              'echo "Waiting for Postgres to initialize..." && sleep 12',
+            ]
+
+      containers:
+        # 1. Контейнер з Django
+        - name: django
+          image: "{{ .Values.image.django }}:{{ .Values.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              python manage.py migrate --noinput &&
+              python manage.py runserver 0.0.0.0:8000 --insecure
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: django-app-config
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "100m"
+
+        # 2. Контейнер з Nginx
+        - name: nginx
+          image: "{{ .Values.image.nginx }}"
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: nginx-config-volume
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: nginx.conf
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "25m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
+
+        # 3. Контейнер з Postgres
+        - name: db
+          image: "postgres:15-alpine"
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: django-app-config
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+
+      volumes:
+        - name: nginx-config-volume
+          configMap:
+            name: django-app-config
+            items:
+              - key: nginx.conf
+                path: nginx.conf
