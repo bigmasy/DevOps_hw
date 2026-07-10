@@ -182,7 +182,7 @@ spec:
         container('git') {
           withCredentials([usernamePassword(credentialsId: 'github-token', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PAT')]) {
             sh '''
-              git clone https://$GIT_USERNAME:$GIT_PAT@${INFRA_REPO_URL#https://} infra
+              git clone --branch $INFRA_REPO_BRANCH https://$GIT_USERNAME:$GIT_PAT@${INFRA_REPO_URL#https://} infra
               cd infra/$CHART_PATH
               sed -i "s/tag: .*/tag: $IMAGE_TAG/" values.yaml
               git config user.email "$GIT_COMMIT_EMAIL"

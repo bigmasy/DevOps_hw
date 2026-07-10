@@ -6,6 +6,11 @@ controller:
   image:
     tag: "lts-jdk17"
 
+  # НЕ дублювати через власний configScript "location" — чарт сам генерує
+  # unclassified.location.url із цього поля; два джерела для одного ключа
+  # валять JCasC-boot з ConfiguratorConflictException.
+  jenkinsUrl: "${jenkins_url}"
+
   admin:
     username: ${jenkins_admin_username}
     password: ${jenkins_admin_password}
@@ -18,11 +23,20 @@ controller:
 
   resources:
     limits:
-      cpu: "500m"
+      cpu: "1000m"
       memory: "1Gi"
     requests:
-      cpu: "250m"
+      cpu: "500m"
       memory: "512Mi"
+
+  # Дефолт чарта (120с = failureThreshold 12 x periodSeconds 10) закороткий
+  # для повного reactor-boot з таким набором плагінів (workflow-aggregator
+  # сам тягне ~15-20 транзитивних плагінів) — kubelet вбивав контейнер
+  # startup-пробою просто посеред завантаження класів, ще до готовності.
+  probes:
+    startupProbe:
+      failureThreshold: 40
+      periodSeconds: 10
 
   installPlugins:
     - kubernetes:latest
@@ -38,6 +52,21 @@ controller:
   serviceAccount:
     name: jenkins-sa
     create: false
+
+  # seed-job запускає inline Job DSL script через JCasC (не через UI), тож
+  # Script Security плагін блокує його як "not yet approved" без ручного
+  # схвалення адміном. JCasC не вміє конфігурувати цей конкретний глобальний
+  # тумблер через YAML (UnknownAttributesException на
+  # globalJobDslSecurityConfiguration) — тому робимо це напряму через
+  # init-script, який виконується з повною довірою при старті контролера.
+  initScripts:
+    disable-job-dsl-security: |
+      import jenkins.model.GlobalConfiguration
+      import javaposse.jobdsl.plugin.GlobalJobDslSecurityConfiguration
+
+      def config = GlobalConfiguration.all().get(GlobalJobDslSecurityConfiguration.class)
+      config.useScriptSecurity = false
+      config.save()
 
   JCasC:
     configScripts:
@@ -83,13 +112,6 @@ controller:
                 apiUrl: "https://api.github.com"
                 credentialsId: "github-token"
                 manageHooks: true
-%{ if jenkins_url != "" ~}
-
-      location: |
-        unclassified:
-          location:
-            url: "${jenkins_url}"
-%{ endif ~}
 
       seed-job: |
         jobs:

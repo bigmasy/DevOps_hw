@@ -30,7 +30,6 @@ spec:
             ]
 
       containers:
-        # 1. Контейнер з Django
         - name: django
           image: "{{ .Values.image.django }}:{{ .Values.image.tag }}"
           imagePullPolicy: IfNotPresent
@@ -54,7 +53,6 @@ spec:
               memory: "256Mi"
               cpu: "100m"
 
-        # 2. Контейнер з Nginx
         - name: nginx
           image: "{{ .Values.image.nginx }}"
           ports:
@@ -71,7 +69,6 @@ spec:
               memory: "64Mi"
               cpu: "50m"
 
-        # 3. Контейнер з Postgres
         - name: db
           image: "postgres:15-alpine"
           ports:

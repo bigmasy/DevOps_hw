@@ -20,14 +20,12 @@ provider "aws" {
   region = "us-west-2"
 }
 
-# Модуль S3 та DynamoDB для бекенду
 module "s3_backend" {
   source      = "./modules/s3-backend"
   bucket_name = "terraform-state-bucket-lesson7-qvnkd"
   table_name  = "terraform-locks-lesson7"
 }
 
-# Модуль VPC
 module "vpc" {
   source             = "./modules/vpc"
   vpc_cidr_block     = "10.0.0.0/16"
@@ -37,7 +35,6 @@ module "vpc" {
   vpc_name           = "lesson-7-vpc"
 }
 
-# Модуль ECR
 module "ecr" {
   source       = "./modules/ecr"
   ecr_name     = "lesson-7-django-repo"
@@ -52,7 +49,6 @@ locals {
   ecr_image_name = split("/", module.ecr.repository_url)[1]
 }
 
-# Модуль Kubernetes кластера (EKS)
 module "eks" {
   source             = "./modules/eks"
   cluster_name       = "lesson-7-eks-cluster"
@@ -78,7 +74,6 @@ resource "aws_ec2_tag" "cluster_subnets_private" {
   value       = "shared"
 }
 
-# Дані для автентифікації Helm-провайдера в кластері EKS
 data "aws_eks_cluster_auth" "eks" {
   name = module.eks.cluster_name
 }
@@ -97,7 +92,6 @@ provider "kubernetes" {
   token                  = data.aws_eks_cluster_auth.eks.token
 }
 
-# Модуль Jenkins (Helm-реліз у кластері EKS + JCasC + IRSA для Kaniko)
 module "jenkins" {
   source       = "./modules/jenkins"
   cluster_name = module.eks.cluster_name
@@ -127,7 +121,6 @@ module "jenkins" {
   git_commit_name  = var.git_commit_name
 }
 
-# Модуль Argo CD (Helm-реліз + GitOps Application для django-app + Secret з реальними кредами)
 module "argo_cd" {
   source = "./modules/argo-cd"
 

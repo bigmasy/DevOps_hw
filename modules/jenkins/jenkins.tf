@@ -69,6 +69,9 @@ resource "helm_release" "jenkins" {
   chart            = "jenkins"
   version          = "5.8.27"
   create_namespace = true
+  # Дефолт (300с) закороткий для повного reboot з нуля: init-контейнери +
+  # install усіх плагінів + JVM boot.
+  timeout = 900
 
   values = [
     templatefile("${path.module}/values.yaml.tpl", {
