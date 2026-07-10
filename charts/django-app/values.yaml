@@ -14,6 +14,10 @@ autoscaling:
 config:
   POSTGRES_DB: "postgres"
   POSTGRES_USER: "postgres"
-  POSTGRES_PASSWORD: "postgres_password"
-  SECRET_KEY: "super-secret-key-for-eks-deployment"
+  DJANGO_ALLOWED_HOSTS: "*"
   DEBUG: "False"
+
+# SECRET_KEY і POSTGRES_PASSWORD навмисно НЕ тут — вони в Kubernetes Secret
+# "django-app-secrets", який створює Terraform (modules/argo-cd/app_secrets.tf)
+# з TF_VAR_django_secret_key / TF_VAR_django_postgres_password, а не Helm/git.
+# deployment.yaml підключає їх окремим envFrom.secretRef.

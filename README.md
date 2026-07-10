@@ -1,125 +1,227 @@
-# Lesson 7: EKS Infrastructure Deployment & Django App Orchestration via Helm
+# Lesson 8-9: Jenkins + Argo CD — повний CI/CD у EKS
 
-Цей проєкт демонструє створення повноцінної хмарної інфраструктури в AWS за допомогою Terraform (IaC) та розгортання масштабованого, відмовостійкого Django-застосунку в кластері Amazon EKS за допомогою Helm.
+Terraform-репозиторій, що піднімає AWS-інфраструктуру (VPC, EKS, ECR) і повністю декларативно (Helm + JCasC) розгортає в кластері:
 
-## Архітектура рішення
+- **Jenkins** — збирає Docker-образ Django-застосунку (Kaniko) і пушить його в ECR, потім оновлює тег образу в Git;
+- **Argo CD** — стежить за Git і синхронізує Helm-чарт застосунку в кластер після кожного оновлення тегу.
 
-Застосунок розгорнуто в одному поді, що містить три контейнери (Multi-container Pod):
+> ⚠️ **Застосунок (Dockerfile + Jenkinsfile) живе в окремому репозиторії, не тут.**
+> Цей репозиторій — лише інфраструктура (Terraform) і маніфест деплою (`charts/django-app`).
+> Репозиторій застосунку: `<TF_VAR_django_repo_url з .env>` (наприклад, `https://github.com/bigmasy/django-app-ci.git`).
+> Jenkinsfile, який там знаходиться, наведений нижче в розділі [Jenkins pipeline](#jenkins-pipeline-django-app-ci).
 
-1. Django App — вебзастосунок, налаштований на роботу в режимі --insecure для автоматичної роздачі вбудованої статики адмінки.
-2. Nginx — вебсервер, який виступає як Reverse Proxy для Django.
-3. PostgreSQL — локальна база даних для збереження даних.
+---
 
-Масштабування забезпечується за допомогою Horizontal Pod Autoscaler (HPA) на основі утилізації CPU.
+## Архітектура CI/CD
+
+```
+Розробник               GitHub                    Jenkins (EKS, ns=jenkins)              ECR         GitHub (infra)          Argo CD (EKS, ns=argocd)        EKS
+    │                      │                              │                               │               │                          │                     │
+    │ git push             │                               │                               │               │                          │                     │
+    ├─────────────────────►│                               │                               │               │                          │                     │
+    │              (django-app-ci)                         │                               │               │                          │                     │
+    │                      │  webhook POST                 │                               │               │                          │                     │
+    │                      ├──────────────────────────────►│                               │               │                          │                     │
+    │                      │                     job goit-django-docker                    │               │                          │                     │
+    │                      │                     agent: kaniko + git (jenkins-sa/IRSA)      │               │                          │                     │
+    │                      │                     stage Build & Push ─────────────────────► │               │                          │                     │
+    │                      │                     stage Update Chart Tag in Git              │               │                          │                     │
+    │                      │                              ├──────────────────────────────────────────────►│                          │                     │
+    │                      │                                                              git push          (charts/django-app/values.yaml: tag: v1.0.N)     │
+    │                      │                                                                                │  Argo CD polls Git       │                     │
+    │                      │                                                                                ├─────────────────────────►│                     │
+    │                      │                                                                                │              автоматично: prune + selfHeal      │
+    │                      │                                                                                │                          ├────────────────────►│
+    │                      │                                                                                │                          │        helm upgrade django-app
+```
+
+Коротко: **push у django-app-ci → Jenkins білдить і пушить образ в ECR → Jenkins комітить новий тег у цей репозиторій → Argo CD бачить зміну в Git і сам синхронізує кластер.** Жодного ручного кроку між пушем коду і оновленням застосунку в кластері, крім першого запуску `seed-job` (одноразово).
 
 ---
 
 ## Структура проєкту
 
-lesson-7/
+```
+.
+├── main.tf                      # Підключення всіх модулів
+├── backend.tf                   # S3 + DynamoDB backend
+├── variables.tf                 # Змінні, що керуються через TF_VAR_* (.env)
+├── outputs.tf                   # Загальні виводи
+├── .env.example                 # Шаблон змінних оточення (секрети, URL-и, теги)
 │
-├── main.tf # Головний файл інфраструктури Terraform
-├── backend.tf # Налаштування віддаленого бекенду (S3 + DynamoDB)
-├── outputs.tf # Загальні виводи створених ресурсів
-├── .gitignore # Виключення системних та секретних файлів з Git
+├── modules/
+│   ├── s3-backend/               # S3-бакет + DynamoDB для стейту
+│   ├── vpc/                      # VPC, підмережі, маршрутизація
+│   ├── ecr/                      # ECR-репозиторій для Docker-образу
+│   ├── eks/                      # EKS-кластер + EBS CSI driver (IRSA) + OIDC provider
+│   ├── jenkins/                  # Helm-реліз Jenkins + JCasC (credentials, seed-job, GitHub server) + IRSA-роль для Kaniko
+│   └── argo-cd/                  # Helm-реліз Argo CD + локальний чарт charts/, що створює Application і repo-credentials Secret
+│       └── charts/               # Helm-чарт: templates/application.yaml, templates/repository.yaml
 │
-├── modules/ # Каталог з інфраструктурними модулями Terraform
-│ ├── s3-backend/ # Модуль для створення S3 бакета та DynamoDB lock-таблиці
-│ ├── vpc/ # Модуль мережі VPC, підмереж та маршрутизації
-│ ├── ecr/ # Модуль репозиторію Amazon ECR
-│ └── eks/ # Модуль кластера Amazon EKS та Node Groups
-│
-└── charts/ # Helm-чарти для деплою застосунку
-└── django-app/
-├── Chart.yaml # Метадані Helm-чарту
-├── values.yaml # Конфігурація чарту (параметри образів, ліміти, HPA, Env)
-└── templates/ # Шаблони маніфестів Kubernetes
-├── deployment.yaml # Маніфест деплойменту (з initContainers та hostAliases)
-├── service.yaml # Сервіс типу LoadBalancer для зовнішнього доступу
-├── configmap.yaml # Карта конфігурацій для змінних оточення та Nginx
-└── hpa.yaml # Налаштування Horizontal Pod Autoscaler (2-6 подів)
+└── charts/
+    └── django-app/                # Helm-чарт застосунку — саме його відстежує Argo CD Application
+        ├── Chart.yaml
+        ├── values.yaml            # image.tag тут оновлює Jenkins після кожного білду
+        └── templates/
+```
 
 ---
 
-## Кроки розгортання інфраструктури
+## Налаштування (.env)
 
-### 1. Ініціалізація та запуск Terraform
+```bash
+cp .env.example .env
+# відредагуйте .env — заповніть github_pat, jenkins_admin_password, ecr_registry,
+# django_repo_url (реальний репозиторій застосунку) тощо
+set -a && source .env && set +a
+```
 
-Перейдіть у корінь проєкту та ініціалізуйте інфраструктуру:
-
-> terraform init
-> terraform apply -auto-approve
-
-_Після успішного завершення ви отримаєте URL вашого ECR репозиторію та дані EKS кластера._
-
-### 2. Налаштування доступу до кластера
-
-Оновіть локальний kubeconfig для підключення kubectl до вашого EKS кластера:
-
-> aws eks update-kubeconfig --region us-west-2 --name <назва*вашого*кластера>
-
-### 3. Авторизація в ECR та завантаження Docker-образу
-
-Авторизуйте локальний Docker в AWS ECR:
-
-> aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin <ваш_aws_account_id>.dkr.ecr.us-west-2.amazonaws.com
-
-Затегайте та запушіть ваш готовий образ Django (створений у ДЗ-4) до репозиторію:
-
-> docker tag django-app:latest <ваш_aws_account_id>[.dkr.ecr.us-west-2.amazonaws.com/lesson-7-django-repo:latest](https://.dkr.ecr.us-west-2.amazonaws.com/lesson-7-django-repo:latest)
-> docker push <ваш_aws_account_id>[.dkr.ecr.us-west-2.amazonaws.com/lesson-7-django-repo:latest](https://.dkr.ecr.us-west-2.amazonaws.com/lesson-7-django-repo:latest)
+Усі секрети (GitHub PAT, паролі, URL-и репозиторіїв, ECR registry) передаються через змінні оточення `TF_VAR_*` — жодних хардкод-значень у `.tf`/`.yaml` файлах. Деталі кожної змінної — у коментарях `.env.example`.
 
 ---
 
-## Розгортання застосунку через Helm
+## Запуск інфраструктури
 
-### 1. Перевірка конфігурації
+### 1. Бутстрап S3-бекенду
 
-Перенесіть ваші змінні середовища з Теми 4 у блок config: всередині файлу charts/django-app/values.yaml. Перевірте параметри масштабування HPA (від 2 до 6 подів):
-[Конфігурація у values.yaml]
-autoscaling:
-enabled: true
-minReplicas: 2
-maxReplicas: 6
-targetCPUUtilizationPercentage: 70
+`backend.tf` вказує на S3-бакет, якого при першому запуску ще не існує — тому спочатку застосовуємо тільки `s3_backend` з локальним стейтом:
 
-### 2. Встановлення Helm-чарту
+```bash
+mv backend.tf backend.tf.disabled
+terraform init
+terraform apply -target=module.s3_backend
+```
 
-Виконайте команду для встановлення релізу:
+### 2. Міграція на S3-бекенд і повний apply
 
-> helm install my-django-release ./charts/django-app
+```bash
+mv backend.tf.disabled backend.tf
+terraform init -migrate-state
+terraform apply
+```
 
-### 3. Моніторинг запуску
+Це підніме VPC → ECR → EKS → EBS CSI driver → Jenkins (Helm + JCasC) → Argo CD (Helm + Application).
 
-Запуск Django контролюється за допомогою initContainers, який очікує 12 секунд для повної ініціалізації сокета PostgreSQL перед початком застосування міграцій.
+### 3. Другий apply — публічний URL Jenkins
 
-Перевірте статус подів:
+`manageHooks` (авторегістрація GitHub-вебхука) потребує коректного Jenkins root URL, який відомий лише після створення LoadBalancer:
 
-> kubectl get pods
-
-_Завдяки налаштованому HPA, Kubernetes автоматично змасштабує деплоймент до 2 подів мінімально._
-
----
-
-## Валідація та перевірка працездатності
-
-1. Отримання зовнішньої адреси сайту:
-   > kubectl get svc django-app-service
-
-Знайдіть адресу в колонці EXTERNAL-IP (наприклад, a22d199a7536e4669904849aeac45e9e-144395864.us-west-2.elb.amazonaws.com).
-
-2. Перевірка веб-інтерфейсу:
-
-- Головна сторінка віддає стандартний 404 Not Found від Django (якщо для / не налаштовано View), що підтверджує успішне проксіювання AWS ELB -> Nginx -> Django.
-- Панель адміністратора доступна за адресою: http://<EXTERNAL-IP>/admin/. Завдяки прапорцю --insecure статика та CSS-стилі відображаються коректно.
+```bash
+kubectl get svc -n jenkins jenkins
+# TF_VAR_jenkins_url=http://<LB-hostname>/  →  у .env
+set -a && source .env && set +a
+terraform apply
+```
 
 ---
 
-## Результати виконання
+## Перевірка Jenkins
 
-- У вашому AWS-акаунті створено кластер Kubernetes.
-- ECR містить завантажений Docker-образ Django-застосунку.
-- Застосунок розгорнутий у кластері за допомогою Helm-чарта.
-- Service забезпечує доступ до застосунку через публічну IP-адресу вашого LoadBalancer.
-- ConfigMap підключено до застосунку через Helm.
-- HPA динамічно масштабує кількість подів (утримує мінімум 2 поди).
+```bash
+terraform output jenkins_namespace
+kubectl get svc -n jenkins jenkins        # зовнішня адреса
+```
+
+Логін — `jenkins_admin_username` / `jenkins_admin_password` з `.env`.
+
+1. Відкрийте job **seed-job** → **Build Now** (один раз, вручну) — він через Job DSL створює pipeline **goit-django-docker**, який клонує `TF_VAR_django_repo_url`.
+2. Переконайтесь, що в django-app-ci є `Dockerfile` і `Jenkinsfile` (див. нижче).
+3. Пуш у django-app-ci → GitHub webhook → `goit-django-docker` запускається автоматично (`githubPush()` trigger), білдить образ через Kaniko, пушить у ECR, і комітить новий `image.tag` у `charts/django-app/values.yaml` цього репозиторію.
+
+### Jenkins pipeline (django-app-ci)
+
+Цей `Jenkinsfile` має лежати в корені репозиторію застосунку (`TF_VAR_django_repo_url`), не тут:
+
+```groovy
+pipeline {
+  agent {
+    kubernetes {
+      yaml """
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    some-label: jenkins-kaniko
+spec:
+  serviceAccountName: jenkins-sa
+  containers:
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:v1.16.0-debug
+      imagePullPolicy: Always
+      command: ["sleep"]
+      args: ["99d"]
+    - name: git
+      image: alpine/git
+      command: ["sleep"]
+      args: ["99d"]
+"""
+    }
+  }
+
+  environment {
+    IMAGE_TAG = "v1.0.${BUILD_NUMBER}"
+  }
+
+  stages {
+    stage('Build & Push Docker Image') {
+      steps {
+        container('kaniko') {
+          sh '''
+            /kaniko/executor \\
+              --context `pwd` \\
+              --dockerfile `pwd`/Dockerfile \\
+              --destination=$ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG \\
+              --cache=true --insecure --skip-tls-verify
+          '''
+        }
+      }
+    }
+
+    stage('Update Chart Tag in Git') {
+      steps {
+        container('git') {
+          withCredentials([usernamePassword(credentialsId: 'github-token', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PAT')]) {
+            sh '''
+              git clone https://$GIT_USERNAME:$GIT_PAT@${INFRA_REPO_URL#https://} infra
+              cd infra/$CHART_PATH
+              sed -i "s/tag: .*/tag: $IMAGE_TAG/" values.yaml
+              git config user.email "$GIT_COMMIT_EMAIL"
+              git config user.name "$GIT_COMMIT_NAME"
+              git add values.yaml
+              git commit -m "Update image tag to $IMAGE_TAG"
+              git push origin HEAD:$INFRA_REPO_BRANCH
+            '''
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+`ECR_REGISTRY`, `IMAGE_NAME`, `INFRA_REPO_URL`, `INFRA_REPO_BRANCH`, `CHART_PATH`, `GIT_COMMIT_EMAIL`, `GIT_COMMIT_NAME` і credential `github-token` уже налаштовані в Jenkins через JCasC (модуль `jenkins`) — у django-app-ci нічого додатково конфігурувати не треба, окрім самих `Dockerfile` і `Jenkinsfile`.
+
+---
+
+## Перевірка Argo CD
+
+```bash
+terraform output argo_cd_server_hint       # команда для зовнішньої адреси UI
+terraform output argo_cd_admin_password_hint
+```
+
+Логін — `admin` / пароль з команди вище.
+
+У UI: **Applications → django-app** — застосунок має бути `Synced` + `Healthy`. Дерево ресурсів покаже Deployment/ReplicaSet/Pod/Service/ConfigMap з `charts/django-app`. Після кожного коміту Jenkins в `values.yaml` (новий `image.tag`) Argo CD сам підхоплює зміну (`syncPolicy.automated: prune + selfHeal`) — без ручного Sync.
+
+---
+
+## Видалення інфраструктури
+
+⚠️ **Порядок важливий.** `terraform destroy` видаляє й S3-бакет/DynamoDB-таблицю зі стейтом — Terraform сам коректно впорядковує видалення (спочатку EKS/Jenkins/Argo CD/VPC, бекенд — останнім), тому досить одного виклику:
+
+```bash
+terraform destroy
+```
+
+Якщо після цього знадобиться підняти інфраструктуру знову — почніть з кроку 1 (бутстрап S3-бекенду), оскільки бакет і DynamoDB-таблиця також були видалені.

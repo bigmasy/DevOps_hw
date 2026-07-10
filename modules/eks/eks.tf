@@ -69,7 +69,10 @@ resource "aws_eks_node_group" "workers" {
     min_size     = 1
   }
 
-  instance_types = ["t3.micro"]
+  # t3.micro дає лише 4 pods/node (ліміт ENI/IP AWS VPC CNI) — daemonsets
+  # (aws-node + kube-proxy + ebs-csi-node) самі займають 3 з них, залишаючи
+  # 1 слот на ворклоуд на ноду. Jenkins+Argo CD+Django фізично не влазять.
+  instance_types = ["t3.small"]
 
   depends_on = [
     aws_iam_role_policy_attachment.node_worker,

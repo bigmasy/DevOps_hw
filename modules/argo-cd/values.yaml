@@ -1,0 +1,15 @@
+server:
+  service:
+    type: LoadBalancer
+    port: 443
+
+# Не використовуються в цьому завданні (SSO, сповіщення, ApplicationSet
+# generators) — вимикаємо, щоб зменшити кількість подів на дрібних нодах.
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
+
+applicationSet:
+  enabled: false
