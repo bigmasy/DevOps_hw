@@ -26,5 +26,10 @@ spec:
       selfHeal: {{ .syncPolicy.automated.selfHeal }}
     syncOptions:
       - CreateNamespace=true
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
 ---
 {{- end }}
