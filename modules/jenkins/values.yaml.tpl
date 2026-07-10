@@ -80,7 +80,12 @@ controller:
                       id: github-token
                       username: ${github_username}
                       password: ${github_pat}
-                      description: GitHub PAT
+                      description: GitHub PAT (git checkout)
+                  - string:
+                      scope: GLOBAL
+                      id: github-api-token
+                      secret: ${github_pat}
+                      description: GitHub PAT (Secret Text — GitHubServerConfig шукає саме StringCredentials, usernamePassword для нього не підходить)
 
       global-env: |
         jenkins:
@@ -110,7 +115,7 @@ controller:
             configs:
               - name: "GitHub"
                 apiUrl: "https://api.github.com"
-                credentialsId: "github-token"
+                credentialsId: "github-api-token"
                 manageHooks: true
 
       seed-job: |
