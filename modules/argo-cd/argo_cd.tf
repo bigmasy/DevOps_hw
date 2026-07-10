@@ -11,6 +11,12 @@ resource "helm_release" "argo_cd" {
   ]
 }
 
+locals {
+  argo_apps_chart_hash = sha256(join("", [
+    for f in fileset("${path.module}/charts", "**") : filesha256("${path.module}/charts/${f}")
+  ]))
+}
+
 resource "helm_release" "argo_apps" {
   name      = "argo-apps"
   chart     = "${path.module}/charts"
@@ -27,6 +33,11 @@ resource "helm_release" "argo_apps" {
       github_pat        = var.github_pat
     })
   ]
+
+  set {
+    name  = "chartFilesHash"
+    value = local.argo_apps_chart_hash
+  }
 
   depends_on = [helm_release.argo_cd]
 }
