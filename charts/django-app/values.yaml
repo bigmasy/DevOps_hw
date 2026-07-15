@@ -3,7 +3,7 @@ replicaCount: 1
 image:
   django: "835665967244.dkr.ecr.us-west-2.amazonaws.com/lesson-7-django-repo"
   nginx: "nginx:alpine"
-  tag: v1.0.3
+  tag: v1.0.6
 
 autoscaling:
   enabled: true
