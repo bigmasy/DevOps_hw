@@ -67,3 +67,13 @@ output "argo_cd_admin_password_hint" {
   description = "Command to fetch the initial Argo CD admin password"
   value       = module.argo_cd.admin_password_hint
 }
+
+output "rds_endpoint" {
+  description = "Endpoint бази даних (лише коли enable_rds = true)"
+  value       = var.enable_rds ? module.rds[0].endpoint : null
+}
+
+output "rds_port" {
+  description = "Порт бази даних (лише коли enable_rds = true)"
+  value       = var.enable_rds ? module.rds[0].port : null
+}

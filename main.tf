@@ -135,3 +135,29 @@ module "argo_cd" {
   github_username = var.github_username
   github_pat      = var.github_pat
 }
+
+# Вимкнений за замовчуванням (var.enable_rds = false) — RDS/Aurora суттєво
+# дорожчі за решту стеку, не кожен apply цього репозиторію має їх створювати.
+module "rds" {
+  source = "./modules/rds"
+  count  = var.enable_rds ? 1 : 0
+
+  identifier             = "lesson-db-module"
+  use_aurora             = var.rds_use_aurora
+  engine                 = var.rds_engine
+  engine_version         = var.rds_engine_version
+  parameter_group_family = var.rds_parameter_group_family
+  instance_class         = var.rds_instance_class
+  multi_az               = var.rds_multi_az
+  aurora_instance_count  = var.rds_aurora_instance_count
+
+  db_name  = var.rds_db_name
+  username = var.rds_username
+  password = var.rds_password
+
+  vpc_id              = module.vpc.vpc_id
+  subnet_ids          = module.vpc.private_subnet_ids
+  ingress_cidr_blocks = ["10.0.0.0/16"]
+
+  skip_final_snapshot = true
+}

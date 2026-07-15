@@ -63,15 +63,16 @@ resource "aws_eks_node_group" "workers" {
   node_role_arn   = aws_iam_role.node.arn
   subnet_ids      = var.private_subnet_ids
 
+  # 2×t3.small не вистачало ~100Mi на одній ноді і впиралось у ліміт 11
+  # pods/node на іншій (виміряно: build-агент з коректними resources
+  # потребує ~688Mi). Третя нода того самого розміру закриває обидва
+  # вузькі місця без зміни типу інстансу.
   scaling_config {
-    desired_size = 2
+    desired_size = 3
     max_size     = 3
     min_size     = 1
   }
 
-  # t3.micro дає лише 4 pods/node (ліміт ENI/IP AWS VPC CNI) — daemonsets
-  # (aws-node + kube-proxy + ebs-csi-node) самі займають 3 з них, залишаючи
-  # 1 слот на ворклоуд на ноду. Jenkins+Argo CD+Django фізично не влазять.
   instance_types = ["t3.small"]
 
   depends_on = [

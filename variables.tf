@@ -90,3 +90,74 @@ variable "git_commit_name" {
   type        = string
   default     = "jenkins-ci"
 }
+
+# --- modules/rds (модуль вимкнений за замовчуванням: RDS/Aurora коштує
+# суттєво більше за решту стеку, і не всі applies цього репозиторію мають
+# його піднімати — тільки коли явно enable_rds = true) ---
+
+variable "enable_rds" {
+  description = "Підняти module.rds (RDS instance або Aurora cluster, залежно від rds_use_aurora). За замовчуванням false, щоб не створювати платну БД на кожному apply."
+  type        = bool
+  default     = false
+}
+
+variable "rds_use_aurora" {
+  description = "true — Aurora Cluster, false — звичайна RDS instance"
+  type        = bool
+  default     = false
+}
+
+variable "rds_engine" {
+  description = "\"postgres\" або \"mysql\""
+  type        = string
+  default     = "postgres"
+}
+
+variable "rds_engine_version" {
+  description = "Версія engine (напр. \"15.17\" для postgres) — має існувати і в RDS, і в Aurora (aws rds describe-db-engine-versions --engine postgres|aurora-postgresql --query 'DBEngineVersions[].EngineVersion'), інакше перемикання rds_use_aurora зламається"
+  type        = string
+  default     = "15.17"
+}
+
+variable "rds_parameter_group_family" {
+  description = "Family для Parameter Group — залежить від rds_engine + rds_engine_version і від rds_use_aurora (напр. \"postgres15\" для RDS, \"aurora-postgresql15\" для Aurora)"
+  type        = string
+  default     = "postgres15"
+}
+
+variable "rds_instance_class" {
+  description = "Клас інстансу RDS/Aurora"
+  type        = string
+  default     = "db.t3.micro"
+}
+
+variable "rds_multi_az" {
+  description = "Multi-AZ для звичайної RDS instance (ігнорується для Aurora)"
+  type        = bool
+  default     = false
+}
+
+variable "rds_aurora_instance_count" {
+  description = "Кількість instances в Aurora-кластері (враховується лише при rds_use_aurora = true)"
+  type        = number
+  default     = 1
+}
+
+variable "rds_db_name" {
+  description = "Назва бази даних"
+  type        = string
+  default     = "appdb"
+}
+
+variable "rds_username" {
+  description = "Master username БД"
+  type        = string
+  default     = "appuser"
+}
+
+variable "rds_password" {
+  description = "Master password БД — без дефолту, обовʼязково через TF_VAR_rds_password з .env"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
