@@ -68,6 +68,16 @@ output "argo_cd_admin_password_hint" {
   value       = module.argo_cd.admin_password_hint
 }
 
+output "monitoring_namespace" {
+  description = "Namespace, у якому розгорнуті Prometheus і Grafana"
+  value       = module.monitoring.monitoring_namespace
+}
+
+output "grafana_access_hint" {
+  description = "Команда для доступу до Grafana UI"
+  value       = module.monitoring.grafana_access_hint
+}
+
 output "rds_endpoint" {
   description = "Endpoint бази даних (лише коли enable_rds = true)"
   value       = var.enable_rds ? module.rds[0].endpoint : null

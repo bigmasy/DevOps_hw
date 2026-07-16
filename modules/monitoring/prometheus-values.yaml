@@ -1,0 +1,40 @@
+alertmanager:
+  enabled: false
+
+prometheus-pushgateway:
+  enabled: false
+
+# У чарті resources всюди {} за замовчуванням — усі числа нижче виставлені
+# явно, щоб уміститись поряд з Jenkins/Argo CD/Django на 3×t3.small.
+server:
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+    limits:
+      cpu: "500m"
+      memory: "768Mi"
+  persistentVolume:
+    enabled: true
+    storageClass: "ebs-sc"
+    size: "8Gi"
+
+kube-state-metrics:
+  enabled: true
+  resources:
+    requests:
+      cpu: "10m"
+      memory: "32Mi"
+    limits:
+      cpu: "50m"
+      memory: "128Mi"
+
+prometheus-node-exporter:
+  enabled: true
+  resources:
+    requests:
+      cpu: "10m"
+      memory: "16Mi"
+    limits:
+      cpu: "50m"
+      memory: "64Mi"

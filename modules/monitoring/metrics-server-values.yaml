@@ -1,0 +1,14 @@
+# EKS worker-ноди використовують self-signed kubelet-сертифікат, якому
+# metrics-server за замовчуванням не довіряє — без цього флагу всі scrape
+# кидають x509 помилку, і HPA (charts/django-app/templates/hpa.yaml)
+# назавжди лишається <unknown>.
+args:
+  - --kubelet-insecure-tls
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "200Mi"
+  limits:
+    cpu: "200m"
+    memory: "300Mi"

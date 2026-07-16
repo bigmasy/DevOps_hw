@@ -91,6 +91,44 @@ variable "git_commit_name" {
   default     = "jenkins-ci"
 }
 
+# --- modules/monitoring (Prometheus + Grafana + metrics-server) ---
+
+variable "monitoring_namespace" {
+  description = "Namespace для Prometheus, Grafana і subchart'ів (kube-state-metrics, node-exporter)"
+  type        = string
+  default     = "monitoring"
+}
+
+variable "grafana_admin_username" {
+  description = "Логін адміністратора Grafana"
+  type        = string
+  default     = "admin"
+}
+
+variable "grafana_admin_password" {
+  description = "Пароль адміністратора Grafana"
+  type        = string
+  sensitive   = true
+}
+
+variable "prometheus_chart_version" {
+  description = "Версія Helm-чарта prometheus-community/prometheus"
+  type        = string
+  default     = "29.17.0"
+}
+
+variable "grafana_chart_version" {
+  description = "Версія Helm-чарта grafana/grafana"
+  type        = string
+  default     = "10.5.15"
+}
+
+variable "metrics_server_chart_version" {
+  description = "Версія Helm-чарта metrics-server/metrics-server"
+  type        = string
+  default     = "3.13.1"
+}
+
 # --- modules/rds (модуль вимкнений за замовчуванням: RDS/Aurora коштує
 # суттєво більше за решту стеку, і не всі applies цього репозиторію мають
 # його піднімати — тільки коли явно enable_rds = true) ---

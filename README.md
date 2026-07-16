@@ -1,9 +1,11 @@
-# Lesson 8-9: Jenkins + Argo CD — повний CI/CD у EKS
+# Фінальний проєкт: EKS CI/CD платформа для Django (Terraform + Jenkins + Argo CD + Prometheus/Grafana)
 
-Terraform-репозиторій, що піднімає AWS-інфраструктуру (VPC, EKS, ECR) і повністю декларативно (Helm + JCasC) розгортає в кластері:
+Terraform-репозиторій, що піднімає AWS-інфраструктуру (VPC, EKS, ECR, опційно RDS/Aurora) і повністю декларативно (Helm + JCasC) розгортає в кластері:
 
 - **Jenkins** — збирає Docker-образ Django-застосунку (Kaniko) і пушить його в ECR, потім оновлює тег образу в Git;
-- **Argo CD** — стежить за Git і синхронізує Helm-чарт застосунку в кластер після кожного оновлення тегу.
+- **Argo CD** — стежить за Git і синхронізує Helm-чарт застосунку в кластер після кожного оновлення тегу;
+- **Prometheus + Grafana** — збирають метрики кластера й застосунку, живлять HPA (автомасштабування подів Django за CPU);
+- **RDS/Aurora** (`modules/rds`) — гнучкий модуль БД, вимкнений за замовчуванням (`enable_rds=false`), застосунок наразі працює на self-hosted Postgres у кластері — деталі в `modules/rds/README.md`.
 
 > ⚠️ **Застосунок (Dockerfile + Jenkinsfile) живе в окремому репозиторії, не тут.**
 > Цей репозиторій — лише інфраструктура (Terraform) і маніфест деплою (`charts/django-app`).
@@ -55,8 +57,10 @@ Terraform-репозиторій, що піднімає AWS-інфраструк
 │   ├── ecr/                      # ECR-репозиторій для Docker-образу
 │   ├── eks/                      # EKS-кластер + EBS CSI driver (IRSA) + OIDC provider
 │   ├── jenkins/                  # Helm-реліз Jenkins + JCasC (credentials, seed-job, GitHub server) + IRSA-роль для Kaniko
-│   └── argo-cd/                  # Helm-реліз Argo CD + локальний чарт charts/, що створює Application і repo-credentials Secret
-│       └── charts/               # Helm-чарт: templates/application.yaml, templates/repository.yaml
+│   ├── argo-cd/                  # Helm-реліз Argo CD + локальний чарт charts/, що створює Application і repo-credentials Secret
+│   │   └── charts/               # Helm-чарт: templates/application.yaml, templates/repository.yaml
+│   ├── monitoring/               # Prometheus + Grafana + metrics-server (Helm-релізи)
+│   └── rds/                      # Гнучкий модуль RDS instance / Aurora Cluster (вимкнений за замовчуванням)
 │
 └── charts/
     └── django-app/                # Helm-чарт застосунку — саме його відстежує Argo CD Application
@@ -100,7 +104,7 @@ terraform init -migrate-state
 terraform apply
 ```
 
-Це підніме VPC → ECR → EKS → EBS CSI driver → Jenkins (Helm + JCasC) → Argo CD (Helm + Application).
+Це підніме VPC → ECR → EKS → EBS CSI driver → Jenkins (Helm + JCasC) → Argo CD (Helm + Application) → Prometheus + Grafana + metrics-server (`module.monitoring`). RDS/Aurora не піднімається (`enable_rds=false` за замовчуванням).
 
 ### 3. Другий apply — публічний URL Jenkins
 
@@ -222,6 +226,9 @@ spec:
 ```bash
 terraform output argo_cd_server_hint       # команда для зовнішньої адреси UI
 terraform output argo_cd_admin_password_hint
+
+# або напряму через port-forward (без LoadBalancer):
+kubectl port-forward svc/argo-cd-argocd-server 8081:443 -n argocd
 ```
 
 Логін — `admin` / пароль з команди вище.
@@ -230,12 +237,71 @@ terraform output argo_cd_admin_password_hint
 
 ---
 
+## Моніторинг (Prometheus + Grafana)
+
+```bash
+kubectl get all -n monitoring
+
+# metrics-server — доказ, що працює (без нього HPA нижче показує <unknown>)
+kubectl top nodes
+kubectl top pods -n django
+
+# Grafana UI
+kubectl port-forward svc/grafana 3000:80 -n monitoring
+# http://localhost:3000 — логін TF_VAR_grafana_admin_username/password з .env
+```
+
+Джерело даних Prometheus у Grafana підключене автоматично (декларативно через Helm values, `modules/monitoring/grafana-values.yaml.tpl`) — після логіну дані вже видно, ручного налаштування datasource не потрібно. Готових дашбордів не імпортовано (щоб не роздувати чарт) — за бажанням: **Dashboards → Import**, ID `1860` (Node Exporter Full) або `7249` (Kubernetes Cluster Monitoring).
+
+Prometheus UI (Targets/Graph) — за потреби:
+```bash
+kubectl port-forward svc/prometheus-server 9090:80 -n monitoring
+```
+
+---
+
+## Перевірка HPA (автомасштабування Django)
+
+`charts/django-app/templates/hpa.yaml` тримає 1-6 реплік за CPU utilization (target 70%) — працює лише завдяки `metrics-server` з `module.monitoring`.
+
+```bash
+kubectl get hpa django-app-hpa -n django
+# TARGETS має показувати число (напр. 3%/70%), не <unknown>
+
+# короткий генератор навантаження
+kubectl run load-generator --image=busybox:1.36 --restart=Never -n django -- \
+  /bin/sh -c "while true; do wget -q -O- http://django-app-service/ > /dev/null; done"
+
+kubectl get hpa django-app-hpa -n django -w   # дочекатись REPLICAS > 1
+kubectl get pods -n django -w
+
+kubectl delete pod load-generator -n django   # зупинити навантаження
+# зменшення реплік назад — автоматичне, за замовчуванням через ~5 хв (stabilizationWindow)
+```
+
+---
+
+## Безпека: VPC / IAM / Security Groups
+
+- **Мережа**: worker-ноди EKS і RDS (коли увімкнений) — лише в приватних підмережах (`module.vpc.private_subnet_ids`), вихід в інтернет через NAT Gateway. Публічні підмережі — тільки для LoadBalancer'ів (Jenkins UI).
+- **IAM-ролі (least privilege, кожна — під конкретний сервіс)**:
+  - `aws_iam_role.cluster` (`${cluster_name}-role`) — EKS control plane, лише `AmazonEKSClusterPolicy`.
+  - `aws_iam_role.node` (`${cluster_name}-node-role`) — worker-ноди: `AmazonEKSWorkerNodePolicy`, `AmazonEKS_CNI_Policy`, `AmazonEC2ContainerRegistryReadOnly` (тільки pull, без push).
+  - `aws_iam_role.ebs_csi_irsa_role` (`${cluster_name}-ebs-csi-irsa-role`) — IRSA, scoped лише до `system:serviceaccount:kube-system:ebs-csi-controller-sa`, `AmazonEBSCSIDriverPolicy`.
+  - `aws_iam_role.jenkins_kaniko_role` (`${cluster_name}-jenkins-kaniko-role`) — IRSA, scoped лише до `system:serviceaccount:jenkins:jenkins-sa`, inline-політика обмежена конкретними ECR push-діями (без `ecr:*`/delete).
+- **Security Groups**: RDS SG (`modules/rds/shared.tf`) — ingress обмежений `ingress_cidr_blocks` (CIDR VPC, `10.0.0.0/16`), жодного `0.0.0.0/0` на вхід.
+- **Секрети**: ніде не хардкодяться — усі паролі/токени (`jenkins_admin_password`, `github_pat`, `django_secret_key`, `grafana_admin_password`, `rds_password` тощо) передаються через `TF_VAR_*` з гітігноред `.env`, позначені `sensitive = true`, і кладуться в Kubernetes Secret самим Terraform (не через Helm values у git).
+
+---
+
 ## Видалення інфраструктури
 
-⚠️ **Порядок важливий.** `terraform destroy` видаляє й S3-бакет/DynamoDB-таблицю зі стейтом — Terraform сам коректно впорядковує видалення (спочатку EKS/Jenkins/Argo CD/VPC, бекенд — останнім), тому досить одного виклику:
+⚠️ **Порядок важливий.** `terraform destroy` видаляє й S3-бакет/DynamoDB-таблицю зі стейтом — Terraform сам коректно впорядковує видалення (спочатку EKS/Jenkins/Argo CD/Prometheus-Grafana/VPC, бекенд — останнім), тому досить одного виклику:
 
 ```bash
 terraform destroy
 ```
+
+Не використовуйте `-target` вибірково для частини стеку, лишаючи `module.s3_backend` "напризволяще" в тому ж прогоні — targeted/ручне видалення бекенду до завершення решти видалень небезпечне (Terraform може спробувати писати оновлений state в уже видалений бакет). Якщо треба видаляти частинами (напр. після помилки apply) — завжди лишайте `module.s3_backend` на потім окремим викликом.
 
 Якщо після цього знадобиться підняти інфраструктуру знову — почніть з кроку 1 (бутстрап S3-бекенду), оскільки бакет і DynamoDB-таблиця також були видалені.

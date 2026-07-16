@@ -136,6 +136,25 @@ module "argo_cd" {
   github_pat      = var.github_pat
 }
 
+module "monitoring" {
+  source = "./modules/monitoring"
+
+  namespace = var.monitoring_namespace
+
+  grafana_admin_username = var.grafana_admin_username
+  grafana_admin_password = var.grafana_admin_password
+
+  prometheus_chart_version     = var.prometheus_chart_version
+  grafana_chart_version        = var.grafana_chart_version
+  metrics_server_chart_version = var.metrics_server_chart_version
+
+  # ebs-sc StorageClass (потрібен для PVC Prometheus) створюється в
+  # modules/jenkins — явна залежність гарантує коректний порядок при
+  # apply "з нуля", інакше Terraform міг би спробувати обидва модулі
+  # паралельно.
+  depends_on = [module.jenkins]
+}
+
 # Вимкнений за замовчуванням (var.enable_rds = false) — RDS/Aurora суттєво
 # дорожчі за решту стеку, не кожен apply цього репозиторію має їх створювати.
 module "rds" {
